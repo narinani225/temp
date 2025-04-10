@@ -1,9 +1,8 @@
 <#
 .DESCRIPTION
 This script installs the PSWindowsUpdate module and uses it to apply Windows updates on the machine.
-
 .NOTES
-If using Azure Windows VMs, this only works for Desktop/Client OS (Win10/Win11), not Server OS.
+If using for Azure Windows VMs, this only works for Desktop/Client OS(Win10/Win11), not Server OS.
 Once updates are installed, this script will execute Chocolatey and use it to install VS Code and Notepad++.
 #>
 
@@ -16,121 +15,131 @@ function Write-Log {
     $Stamp = (Get-Date).toString("yyyy/MM/dd HH:mm:ss")
     $LogMessage = "$Stamp $LogString"
     Write-Output $LogMessage
-    Add-content $LogFile -value $LogMessage
+    Add-content $logfile -value $LogMessage
 }
 
 [bool]$NugetFailed = $false
 
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
+# Check for NuGet provider
 try {
-    # Install the NuGet package provider if required
     if (-not (Get-PackageProvider -Name Nuget -ListAvailable -ErrorAction SilentlyContinue)) {
-        Write-Log "Nuget package provider not found. Installing."
+        Write-Log "NuGet package provider not found. Installing."
         Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force -Confirm:$false -ErrorAction Stop
-        Write-Log -LogString "Installed the Nuget Package Provider"
+        Write-Log "Installed the Nuget Package Provider"
     }
 }
 catch {
-    Write-log -LogString "ERROR: $($_.Exception.Message)"
+    Write-Log "ERROR: $($_.Exception.Message)"
     $NugetFailed = $true
 }
 
-# Check if the package provider is installed.
-if (Get-PackageProvider -Name Nuget -ListAvailable -ErrorAction SilentlyContinue) {
-    Write-Log -LogString "Nuget package provider is verified installed."
-}
-else {
-    $NugetFailed = $true
+if ($NugetFailed) {
+    Write-Log "Skipping PSWindowsUpdate installation due to NuGet failure."
+    Exit
 }
 
+# Install PSWindowsUpdate
 try {
-    # Install the PSWindowsUpdate module
     if (-not (Get-Module -Name "PSWindowsUpdate" -ListAvailable -ErrorAction SilentlyContinue)) {
         Write-Log "PSWindowsUpdate module not found. Installing."
         if ($NugetFailed) {
-            Write-Log -LogString "Failed to install the Nuget provider. Exiting since PSWindowsUpdate module cannot be downloaded without this provider."
+            Write-Log "Failed to install the NuGet provider. Exiting since PSWindowsUpdate module cannot be downloaded."
             Exit
         } else {
             Install-Module -Name PSWindowsUpdate -Scope AllUsers -Force -Confirm:$false -ErrorAction Stop
         }
-
-        Write-Log -LogString "Installed the PSWindowsUpdate module."
+        Write-Log "Installed the PSWindowsUpdate module."
     }
 }
 catch {
-    Write-log -LogString "ERROR: $($_.Exception.Message)"
+    Write-Log "ERROR: $($_.Exception.Message)"
 }
 
 Import-Module PSWindowsUpdate
-Write-Log -LogString "Imported the PSWindowsUpdate module"
+Write-Log "Imported the PSWindowsUpdate module"
 
+# Check for Windows updates
 try {
     Add-WUServiceManager -MicrosoftUpdate -Silent -Confirm:$false
     $updates = Get-WindowsUpdate
     if ($updates) {
-        Write-Log -LogString "Updates are available. Downloading and applying updates."
-        Write-Log -LogString "Available Updates: `n$($updates | Out-String)"
+        Write-Log "Updates are available. Downloading and applying updates."
         Install-WindowsUpdate -Install -MicrosoftUpdate -AcceptAll -IgnoreReboot | Out-File "C:\Windows\Temp\$(get-date -f yyyy-MM-dd)-WindowsUpdate.log" -Force
-        Write-Log -LogString "Installed Windows Updates. You might want to reboot your computer."
+        Write-Log "Installed Windows Updates. You might want to reboot your computer."
         $rebootStatus = Get-WURebootStatus -Silent
-        Write-Log -LogString "Reboot required: $rebootStatus"
+        Write-Log "Reboot required: $rebootStatus"
     }
     else {
-        Write-Log -LogString "No updates to install."
+        Write-Log "No updates to install."
     }
 }
 catch {
-    Write-Log -LogString "ERROR: $($_.Exception.Message)"
+    Write-Log "ERROR: $($_.Exception.Message)"
 }
 
-# Step 1: Set execution policy
+# Set execution policy
 try {
-    Write-Output "Setting execution policy to Bypass..."
+    Write-Log "Setting execution policy to Bypass..."
     Set-ExecutionPolicy Bypass -Scope Process -Force
-    Write-Output "Execution policy set successfully."
+    Write-Log "Execution policy set successfully."
 }
 catch {
-    Write-Log -LogString "Failed to set execution policy. Error: $_"
+    Write-Log "Failed to set execution policy. Error: $_"
     exit 1
 }
 
-# Step 2: Install Chocolatey
-try {
-    Write-Output "Installing Chocolatey..."
-    iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
-    Write-Output "Chocolatey installation complete."
+# Install Chocolatey
+$chocoInstalled = $false
+$retryCount = 0
+$maxRetries = 5
+
+while (-not $chocoInstalled -and $retryCount -lt $maxRetries) {
+    try {
+        Write-Log "Installing Chocolatey..."
+        iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
+        Write-Log "Chocolatey installation complete."
+        $chocoInstalled = $true
+    }
+    catch {
+        Write-Log "Chocolatey installation failed. Error: $_"
+        $retryCount++
+        Write-Log "Retrying ($retryCount of $maxRetries)..."
+        Start-Sleep -Seconds 5
+    }
 }
-catch {
-    Write-Log -LogString "Chocolatey installation failed. Error: $_"
+
+if (-not $chocoInstalled) {
+    Write-Log "Failed to install Chocolatey after $maxRetries attempts."
     exit 1
 }
 
-# Step 3: Install Notepad++
+# Install Notepad++
 try {
-    Write-Output "Installing Notepad++..."
+    Write-Log "Installing Notepad++..."
     choco install notepadplusplus -y
-    Write-Output "Notepad++ installed successfully."
+    Write-Log "Notepad++ installed successfully."
 }
 catch {
-    Write-Log -LogString "Failed to install Notepad++. Error: $_"
+    Write-Log "Failed to install Notepad++. Error: $_"
 }
 
-# Step 4: Install Visual Studio Code
+# Install Visual Studio Code
 try {
-    Write-Output "Installing Visual Studio Code..."
+    Write-Log "Installing Visual Studio Code..."
     choco install vscode -y
-    Write-Output "Visual Studio Code installed successfully."
+    Write-Log "Visual Studio Code installed successfully."
 }
 catch {
-    Write-Log -LogString "Failed to install Visual Studio Code. Error: $_"
+    Write-Log "Failed to install Visual Studio Code. Error: $_"
 }
 
-# Step 5: Final version check
+# Verify Chocolatey installation
 try {
-    Write-Output "Verifying Chocolatey installation..."
+    Write-Log "Verifying Chocolatey installation..."
     choco -v
 }
 catch {
-    Write-Log -LogString "Chocolatey verification failed. Error: $_"
+    Write-Log "Chocolatey verification failed. Error: $_"
 }
