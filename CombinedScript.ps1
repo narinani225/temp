@@ -10,16 +10,17 @@ Once updates are installed, this script will execute Chocolatey and use it to in
 param ()
 
 $logfile = "C:\Windows\Temp\WinUpdateStep_log.log"
+
+# Function for logging
 function Write-Log {
     Param ([string]$LogString)
-    $Stamp = (Get-Date).toString("yyyy/MM/dd HH:mm:ss")
+    $Stamp = (Get-Date).ToString("yyyy/MM/dd HH:mm:ss")
     $LogMessage = "$Stamp $LogString"
     Write-Output $LogMessage
     Add-content $logfile -value $LogMessage
 }
 
 [bool]$NugetFailed = $false
-
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
 # Check for NuGet provider
@@ -40,7 +41,7 @@ if ($NugetFailed) {
     Exit
 }
 
-# Install PSWindowsUpdate
+# Install PSWindowsUpdate module
 try {
     if (-not (Get-Module -Name "PSWindowsUpdate" -ListAvailable -ErrorAction SilentlyContinue)) {
         Write-Log "PSWindowsUpdate module not found. Installing."
@@ -106,7 +107,7 @@ while (-not $chocoInstalled -and $retryCount -lt $maxRetries) {
         Write-Log "Chocolatey installation failed. Error: $_"
         $retryCount++
         Write-Log "Retrying ($retryCount of $maxRetries)..."
-        Start-Sleep -Seconds 5
+        Start-Sleep -Seconds 10  # Increase delay
     }
 }
 
