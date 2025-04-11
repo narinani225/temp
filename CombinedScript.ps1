@@ -144,3 +144,12 @@ try {
 catch {
     Write-Log "Chocolatey verification failed. Error: $_"
 }
+
+
+try {
+    Start-Process -FilePath "C:\Windows\System32\Sysprep\sysprep.exe" -ArgumentList "/generalize","/shutdown","/oobe" -Wait
+}
+catch {
+    Write-Host "Error while sysprepping: $($_.Exception.Message)"
+    Write-Host "Please check the logs in the SysPrep\Panther folder"
+}
