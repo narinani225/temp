@@ -9,46 +9,51 @@ terraform {
 
 provider "azurerm" {
   features {}
-  subscription_id = "3bc8f069-65c7-4d08-b8de-534c20e56c38"
-  tenant_id       = "24c341f8-8c8f-44ef-a388-6fa08c3eef6a"
+  subscription_id = var.subscription_id
+  tenant_id       = var.tenant_id
 }
 
-resource "azurerm_resource_group" "example" {
-  name     = "2406049-rg01"
-  location = "West Europe"
+data "azurerm_shared_image" "devbox-image" {
+  name                = var.imagename 
+  gallery_name        = var.galleryname  
+  resource_group_name = var.imageresgrp  
 }
-
-resource "azurerm_virtual_network" "example" {
-  name                = "virtnetnameee"
+# 1. Resource Group (reuse if already exists)
+resource "azurerm_resource_group" "devbox-rg" {
+  name     = var.resourcegroup
+  location = var.location
+}
+resource "azurerm_virtual_network" "devbox-vnet" {
+  name                = var.vnetname
+  depends_on          = [ azurerm_network_security_group.devbox-nsg ]
   address_space       = ["10.0.0.0/16"]
-  location            = azurerm_resource_group.example.location
-  resource_group_name = azurerm_resource_group.example.name
+  location            = var.location
+  resource_group_name = var.resourcegroup
 }
 
-resource "azurerm_subnet" "example" {
-  name                 = "subnetnamee"
-  resource_group_name  = azurerm_resource_group.example.name
-  virtual_network_name = azurerm_virtual_network.example.name
+resource "azurerm_subnet" "devbox-subnet" {
+  name                 = var.subnetname
+  depends_on = [ azurerm_virtual_network.devbox-vnet ]
+  resource_group_name  = var.resourcegroup
+  virtual_network_name = var.vnetname
   address_prefixes     = ["10.0.2.0/24"]
-  service_endpoints    = ["Microsoft.Sql", "Microsoft.Storage"]
+ # service_endpoints    = ["Microsoft.Sql", "Microsoft.Storage"]
 }
 
-resource "azurerm_public_ip" "example" {
-  name                = "example-public-ip"
-  location            = azurerm_resource_group.example.location
-  resource_group_name = azurerm_resource_group.example.name
+resource "azurerm_public_ip" "devbox-pip" {
+  name                = var.publicipname
+  depends_on = [ azurerm_subnet.devbox-subnet ]
+  location            = var.location
+  resource_group_name = var.resourcegroup
   allocation_method   = "Dynamic"
-  domain_name_label   = "examplelabel0980"
-
-  tags = {
-    environment = "staging"
-  }
+  domain_name_label   = "examplelabel121"
 }
 
-resource "azurerm_network_security_group" "example" {
-  name                = "example-nsg"
-  location            = azurerm_resource_group.example.location
-  resource_group_name = azurerm_resource_group.example.name
+resource "azurerm_network_security_group" "devbox-nsg" {
+  name                = var.nsgname
+  depends_on = [ azurerm_virtual_network.devbox-vnet ]
+  location            = var.location
+  resource_group_name = var.resourcegroup
 
   security_rule {
     name                       = "allow-ssh"
@@ -73,78 +78,54 @@ resource "azurerm_network_security_group" "example" {
     source_address_prefix      = "*"
     destination_address_prefix = "*"
   }
-
-  tags = {
-    environment = "staging"
-  }
 }
 
-resource "azurerm_network_interface" "main" {
-  name                = "subnetnic"
-  location            = azurerm_resource_group.example.location
-  resource_group_name = azurerm_resource_group.example.name
+resource "azurerm_network_interface" "devbox-nic" {
+  name                = var.nicname
+  depends_on          = [ azurerm_public_ip.devbox-pip, azurerm_subnet.devbox-subnet ]
+  location            = var.location
+  resource_group_name = var.resourcegroup
 
   ip_configuration {
     name                          = "testconfiguration1"
-    subnet_id                     = azurerm_subnet.example.id
+    subnet_id                     = azurerm_subnet.devbox-subnet.id
     private_ip_address_allocation = "Dynamic"
-    public_ip_address_id         = azurerm_public_ip.example.id
+       public_ip_address_id         = azurerm_public_ip.devbox-pip.id
   }
 }
 
-resource "azurerm_virtual_machine" "main" {
-  name                  = "2406049-Win11"
-  location              = azurerm_resource_group.example.location
-  resource_group_name   = azurerm_resource_group.example.name
-  network_interface_ids = [azurerm_network_interface.main.id]
-  vm_size               = "Standard_DS1_v2"
+# 3. Deploy the VM
+resource "azurerm_windows_virtual_machine" "devbox-vm" {
+  name                = var.vmname
+  depends_on          = [ azurerm_network_interface.devbox-nic ]
+  resource_group_name = var.resourcegroup
+  location            = var.location
+  size                = "Standard_D2s_v4"
+  admin_username      = var.adminusername
+  admin_password      = var.adminpassword
+  network_interface_ids = [
+    azurerm_network_interface.devbox-nic.id,
+  ]
 
-  storage_image_reference {
-    publisher = "MicrosoftWindowsDesktop"
-    offer     = "windows-11"
-    sku       = "win11-22h2-pro"
-    version   = "latest"
+  os_disk {
+    caching              = "ReadWrite"
+    storage_account_type = "Standard_LRS"
   }
 
-  storage_os_disk {
-    name              = "win11osdisk"
-    caching           = "ReadWrite"
-    create_option     = "FromImage"
-    managed_disk_type = "Standard_LRS"
-  }
-
-  os_profile {
-    computer_name  = "win11host"
-    admin_username = "testadmin"
-    admin_password = "WinPassword1234!"  # Must meet Azure's password policy
-  }
-
-  os_profile_windows_config {
-    provision_vm_agent        = true
-    enable_automatic_upgrades = true
-  }
-
-  tags = {
-    environment = "staging"
-  }
+  source_image_id = data.azurerm_shared_image.devbox-image.id
 }
-
-resource "azurerm_virtual_machine_extension" "dev_setup_script" {
-  name                 = "dev-setup-script2"
-  virtual_machine_id   = azurerm_virtual_machine.main.id
+# 4. Optional: Run script after provisioning
+resource "azurerm_virtual_machine_extension" "custom_script" {
+  name                 = var.customscriptname
+  virtual_machine_id   = azurerm_windows_virtual_machine.devbox-vm.id
   publisher            = "Microsoft.Compute"
   type                 = "CustomScriptExtension"
   type_handler_version = "1.10"
 
   settings = jsonencode({
-    fileUris = [
-      "https://raw.githubusercontent.com/narinani225/temp/main/CombinedScript.ps1"  # Change to your actual GitHub URL
-    ]
+    fileUris = ["https://raw.githubusercontent.com/narinani225/temp/main/CombinedScript.ps1"]
     commandToExecute = "powershell.exe -ExecutionPolicy Bypass -File CombinedScript.ps1"
   })
 
-  depends_on = [azurerm_virtual_machine.main]
+  depends_on = [azurerm_windows_virtual_machine.devbox-vm]
 }
-
- 
- 
